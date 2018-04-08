@@ -1,0 +1,191 @@
+﻿using System;
+using System.Threading.Tasks;
+using System.Net.Http;
+using Newtonsoft.Json;
+using System.Threading;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+
+namespace EfficientApiCalls
+{
+    public class Program
+    {
+        private class ProxyHttpMessageHandler : HttpClientHandler
+        {
+            private class CharlesProxy : IWebProxy
+            {
+                public ICredentials Credentials
+                {
+                    get;set;
+                }
+
+                public Uri GetProxy(Uri destination)
+                {
+                    return new Uri("http://127.0.0.1:8888");
+                }
+
+                public bool IsBypassed(Uri host)
+                {
+                    return false;
+                }
+            }
+
+            public ProxyHttpMessageHandler()
+            {
+                Proxy = new CharlesProxy();
+            }
+        }
+
+        public static void Main(string[] args)
+        {
+            MainAsync(CancellationToken.None).Wait();
+        }
+
+        private static async Task MainAsync(CancellationToken cancellationToken)
+        {
+            // JIT
+            await BasicCallAsync();
+            await CancellableCallAsync(cancellationToken);
+            await CheckNetworkErrorCallAsync(cancellationToken);
+            await CustomExceptionCallAsync(cancellationToken);
+            await DeserializeFromStreamCallAsync(cancellationToken);
+            await DeserializeOptimizedFromStreamCallAsync(cancellationToken);
+
+            Console.Clear();
+
+            const int maxLoop = 100;
+
+            await BenchmarkHelper.BenchAsync(BasicCallAsync, maxLoop, nameof(Program.BasicCallAsync));
+            await BenchmarkHelper.BenchAsync(CancellableCallAsync, maxLoop, nameof(Program.CancellableCallAsync), cancellationToken);
+            await BenchmarkHelper.BenchAsync(CheckNetworkErrorCallAsync, maxLoop, nameof(Program.CheckNetworkErrorCallAsync), cancellationToken);
+            await BenchmarkHelper.BenchAsync(CustomExceptionCallAsync, maxLoop, nameof(Program.CustomExceptionCallAsync), cancellationToken);
+            await BenchmarkHelper.BenchAsync(DeserializeFromStreamCallAsync, maxLoop, nameof(Program.DeserializeFromStreamCallAsync), cancellationToken);
+            await BenchmarkHelper.BenchAsync(DeserializeOptimizedFromStreamCallAsync, maxLoop, nameof(Program.DeserializeOptimizedFromStreamCallAsync), cancellationToken);
+        }
+
+        private const string Url =
+            "https://next.json-generator.com/api/json/get/E1IlXtbj4";
+
+        private static async Task<List<Model>> BasicCallAsync()
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            {
+                var content = await client.GetStringAsync(Url);
+                return JsonConvert.DeserializeObject<List<Model>>(content);
+            }
+        }
+
+        private static async Task<List<Model>> CancellableCallAsync(CancellationToken cancellationToken)
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
+            using (var response = await client.SendAsync(request, cancellationToken))
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonConvert.DeserializeObject<List<Model>>(content);
+            }
+        }
+
+        private static async Task<List<Model>> CheckNetworkErrorCallAsync(CancellationToken cancellationToken)
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
+            using (var response = await client.SendAsync(request, cancellationToken))
+            {
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonConvert.DeserializeObject<List<Model>>(content);
+            }
+        }
+
+        public class ApiException : Exception
+        {
+            public int StatusCode { get; set; }
+
+            public string Content { get; set; }
+        }
+
+        private static async Task<List<Model>> CustomExceptionCallAsync(CancellationToken cancellationToken)
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
+            using (var response = await client.SendAsync(request, cancellationToken))
+            {
+                var content = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode == false)
+                    throw new ApiException { StatusCode = (int)response.StatusCode, Content = content };
+
+                return JsonConvert.DeserializeObject<List<Model>>(content);
+            }
+        }
+
+        private static T DeserializeJsonFromStream<T>(Stream stream)
+        {
+            if (stream == null || stream.CanRead == false)
+                return default(T);
+            
+            using (var sr = new StreamReader(stream))
+            using (var jtr = new JsonTextReader(sr))
+            {
+                var jr = new JsonSerializer();
+                var searchResult = jr.Deserialize<T>(jtr);
+                return searchResult;
+            }
+        }
+
+        private static async Task<string> StreamToStringAsync(Stream stream)
+        {
+            string content = null;
+
+            if (stream != null)
+            {
+                using (var sr = new StreamReader(stream))
+                {
+                    content = await sr.ReadToEndAsync();
+                }
+            }
+            
+            return content;
+        }
+
+        private static async Task<List<Model>> DeserializeFromStreamCallAsync(CancellationToken cancellationToken)
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
+            using (var response = await client.SendAsync(request, cancellationToken))
+            {
+                var stream = await response.Content.ReadAsStreamAsync();
+
+                if (response.IsSuccessStatusCode)
+                    return DeserializeJsonFromStream<List<Model>>(stream);
+
+                var content = await StreamToStringAsync(stream);
+                throw new ApiException { StatusCode = (int)response.StatusCode, Content = content };
+            }
+        }
+
+        private static async Task<List<Model>> DeserializeOptimizedFromStreamCallAsync(CancellationToken cancellationToken)
+        {
+            using (var handler = new ProxyHttpMessageHandler())
+            using (var client = new HttpClient(handler))
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
+            using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+            {
+                var stream = await response.Content.ReadAsStreamAsync();
+
+                if (response.IsSuccessStatusCode)
+                    return DeserializeJsonFromStream<List<Model>>(stream);
+
+                var content = await StreamToStringAsync(stream);
+                throw new ApiException { StatusCode = (int)response.StatusCode, Content = content };
+            }
+        }
+    }
+}

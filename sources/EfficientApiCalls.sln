@@ -1,0 +1,17 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EfficientApiCalls", "EfficientApiCalls\EfficientApiCalls.csproj", "{630EAB9D-4AD1-479B-9D7E-F837521C1652}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{630EAB9D-4AD1-479B-9D7E-F837521C1652}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{630EAB9D-4AD1-479B-9D7E-F837521C1652}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{630EAB9D-4AD1-479B-9D7E-F837521C1652}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{630EAB9D-4AD1-479B-9D7E-F837521C1652}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
