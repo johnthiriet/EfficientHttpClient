@@ -1,41 +1,19 @@
 ﻿using System;
-using System.Threading.Tasks;
-using System.Net.Http;
-using Newtonsoft.Json;
-using System.Threading;
 using System.Collections.Generic;
 using System.IO;
-using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
 
 namespace EfficientApiCalls
 {
     public class Program
     {
-        private class ProxyHttpMessageHandler : HttpClientHandler
-        {
-            private class CharlesProxy : IWebProxy
-            {
-                public ICredentials Credentials
-                {
-                    get;set;
-                }
 
-                public Uri GetProxy(Uri destination)
-                {
-                    return new Uri("http://127.0.0.1:8888");
-                }
-
-                public bool IsBypassed(Uri host)
-                {
-                    return false;
-                }
-            }
-
-            public ProxyHttpMessageHandler()
-            {
-                Proxy = new CharlesProxy();
-            }
-        }
+        private static readonly HttpClient client = new HttpClient(); 
 
         public static void Main(string[] args)
         {
@@ -45,12 +23,12 @@ namespace EfficientApiCalls
         private static async Task MainAsync(CancellationToken cancellationToken)
         {
             // JIT
-            await BasicCallAsync();
-            await CancellableCallAsync(cancellationToken);
-            await CheckNetworkErrorCallAsync(cancellationToken);
-            await CustomExceptionCallAsync(cancellationToken);
-            await DeserializeFromStreamCallAsync(cancellationToken);
-            await DeserializeOptimizedFromStreamCallAsync(cancellationToken);
+            //await BasicCallAsync();
+            //await CancellableCallAsync(cancellationToken);
+            //await CheckNetworkErrorCallAsync(cancellationToken);
+            //await CustomExceptionCallAsync(cancellationToken);
+            //await DeserializeFromStreamCallAsync(cancellationToken);
+            var model = await DeserializeOptimizedFromStreamCallAsync(cancellationToken);
 
             Console.Clear();
 
@@ -62,25 +40,23 @@ namespace EfficientApiCalls
             await BenchmarkHelper.BenchAsync(CustomExceptionCallAsync, maxLoop, nameof(Program.CustomExceptionCallAsync), cancellationToken);
             await BenchmarkHelper.BenchAsync(DeserializeFromStreamCallAsync, maxLoop, nameof(Program.DeserializeFromStreamCallAsync), cancellationToken);
             await BenchmarkHelper.BenchAsync(DeserializeOptimizedFromStreamCallAsync, maxLoop, nameof(Program.DeserializeOptimizedFromStreamCallAsync), cancellationToken);
+
+            // POST
+            await BenchmarkHelper.BenchAsync(PostBasicAsync, maxLoop, nameof(Program.PostBasicAsync), model, cancellationToken);
+            await BenchmarkHelper.BenchAsync(PostStreamAsync, maxLoop, nameof(Program.PostStreamAsync), model, cancellationToken);
         }
 
         private const string Url =
-            "https://next.json-generator.com/api/json/get/E1IlXtbj4";
+            "http://localhost:5000/api/values";
 
         private static async Task<List<Model>> BasicCallAsync()
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
-            {
-                var content = await client.GetStringAsync(Url);
-                return JsonConvert.DeserializeObject<List<Model>>(content);
-            }
+            var content = await client.GetStringAsync(Url);
+            return JsonConvert.DeserializeObject<List<Model>>(content);
         }
 
         private static async Task<List<Model>> CancellableCallAsync(CancellationToken cancellationToken)
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
             using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
             using (var response = await client.SendAsync(request, cancellationToken))
             {
@@ -91,8 +67,6 @@ namespace EfficientApiCalls
 
         private static async Task<List<Model>> CheckNetworkErrorCallAsync(CancellationToken cancellationToken)
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
             using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
             using (var response = await client.SendAsync(request, cancellationToken))
             {
@@ -111,8 +85,6 @@ namespace EfficientApiCalls
 
         private static async Task<List<Model>> CustomExceptionCallAsync(CancellationToken cancellationToken)
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
             using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
             using (var response = await client.SendAsync(request, cancellationToken))
             {
@@ -156,8 +128,6 @@ namespace EfficientApiCalls
 
         private static async Task<List<Model>> DeserializeFromStreamCallAsync(CancellationToken cancellationToken)
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
             using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
             using (var response = await client.SendAsync(request, cancellationToken))
             {
@@ -173,8 +143,6 @@ namespace EfficientApiCalls
 
         private static async Task<List<Model>> DeserializeOptimizedFromStreamCallAsync(CancellationToken cancellationToken)
         {
-            using (var handler = new ProxyHttpMessageHandler())
-            using (var client = new HttpClient(handler))
             using (var request = new HttpRequestMessage(HttpMethod.Get, Url))
             using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
             {
@@ -185,6 +153,70 @@ namespace EfficientApiCalls
 
                 var content = await StreamToStringAsync(stream);
                 throw new ApiException { StatusCode = (int)response.StatusCode, Content = content };
+            }
+        }
+
+        private static async Task PostBasicAsync(object content, CancellationToken cancellationToken)
+        {
+            using (var client = new HttpClient())
+            using (var request = new HttpRequestMessage(HttpMethod.Post, Url))
+            {
+                var json = JsonConvert.SerializeObject(content);
+                using (var stringContent = new StringContent(json, Encoding.UTF8, "application/json"))
+                {
+                    request.Content = stringContent;
+
+                    using (var response = await client
+                        .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                        .ConfigureAwait(false))
+                    {
+                        response.EnsureSuccessStatusCode();
+                    }
+                }
+            }
+        }
+
+        public static void SerializeJsonIntoStream(object value, Stream stream)
+        {
+            using (var sw = new StreamWriter(stream, new UTF8Encoding(false), 1024, true))
+            using (var jtw = new JsonTextWriter(sw) { Formatting = Formatting.None })
+            {
+                var js = new JsonSerializer();
+                js.Serialize(jtw, value);
+                jtw.Flush();
+            }
+        }
+
+        private static HttpContent CreateHttpContent(object content)
+        {
+            HttpContent httpContent = null;
+
+            if (content != null)
+            {
+                var ms = new MemoryStream();
+                SerializeJsonIntoStream(content, ms);
+                ms.Seek(0, SeekOrigin.Begin);
+                httpContent = new StreamContent(ms);
+                httpContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            }
+
+            return httpContent;
+        }
+
+        private static async Task PostStreamAsync(object content, CancellationToken cancellationToken)
+        {
+            using (var client = new HttpClient())
+            using (var request = new HttpRequestMessage(HttpMethod.Post, Url))
+            using (var httpContent = CreateHttpContent(content))
+            {
+                request.Content = httpContent;
+
+                using (var response = await client
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    response.EnsureSuccessStatusCode();
+                }
             }
         }
     }
